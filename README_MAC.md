@@ -82,8 +82,8 @@ Files (URL is `https://huggingface.co/tori29umai/mylora_V2/resolve/main/<file>`)
 | `copi-ki-base-girl_ncl_am31.safetensors` | `e14961aed6102b17b920dea89c7a30fbc48910b66ce833f775806f34ed581f68` |
 | `copi-ki-base-girl_ncnl_am31.safetensors` | `f7d3d0f2bc9896751865cabf05de1d383b1d86d6b643a805868e9372bbb590d4` |
 | `copi-ki-base-girl_cnl_am31.safetensors` | `f3925e4c51c1f2cb2dd339849713e2502808741f08e42246eb2b6e5f01f0c4ce` |
-| `copi-ki-base-female_p_am31.safetensors` | (verify with the upstream `CoppyLora_webUI_DL.cmd`) |
-| `copi-ki-base-male_p_am31.safetensors` | (verify with the upstream `CoppyLora_webUI_DL.cmd`) |
+
+Note: upstream's `CoppyLora_webUI_DL.cmd` also tries to download `copi-ki-base-female_p_am31.safetensors` and `copi-ki-base-male_p_am31.safetensors`, but those files do not exist on the `tori29umai/mylora_V2` Hugging Face repo (verified via the HF tree API) and are not referenced anywhere in `CoppyLora_webUI.py`. The Windows DL script silently swallows the 404. Skip them.
 
 Verify any file with: `shasum -a 256 <file>`
 
