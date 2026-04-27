@@ -101,48 +101,74 @@ The Gradio app launches and your browser opens to <http://127.0.0.1:7860> (or th
 
 ---
 
-## 5. Memory tuning (if you hit MPS out-of-memory)
+## 5. System hygiene before training (important on Mac)
 
-The upstream defaults assume ~24 GB unified memory. If a 16 GB Mac runs out of memory, try these in `config.toml`, in order of preference:
+Mac unified memory is shared with WindowServer, your browser, every Electron app, and the OS. Unlike a Windows machine with a discrete GPU, every gigabyte you waste on background apps comes directly out of training memory — and once you start swapping to disk, step time blows up from ~10 s/iter to >100 s/iter.
 
-1. **Drop batch size**: `train_batch_size = 1` — biggest single saving.
-2. **Drop resolution**: `resolution = "768,768"` (still SDXL-compatible thanks to bucketing).
-3. **Switch to AdaFactor** — most memory-efficient optimizer, ~30% reduction vs AdamW:
-   ```toml
-   optimizer_type = "Adafactor"
-   optimizer_args = ["scale_parameter=False", "relative_step=False", "warmup_init=False"]
-   ```
-4. **Disable the MPS upper-memory cap** (last resort — can swap to disk):
-   ```bash
-   export PYTORCH_MPS_HIGH_WATERMARK_RATIO=0.0
-   ./start.sh
-   ```
+**Before clicking Train:**
+
+- Quit Slack, Discord, Telegram, Spotify, Notion, and any other Electron app.
+- Close all browser tabs except the Gradio one. Many-tabbed Chrome / Comet / Safari can easily hold 4–8 GB.
+- (16 GB Macs only, recommended) Log out and back in before the first run. WindowServer's working set grows over time and a fresh login reclaims it.
+- Open Activity Monitor → Memory tab. Watch **Swap Used** while training. >2 GB sustained means you're swapping — quit more apps or switch to `config_lowmem.toml`.
+
+The launcher (`start.sh`) automatically sets `PYTORCH_MPS_HIGH_WATERMARK_RATIO=0.0`, `PYTORCH_MPS_LOW_WATERMARK_RATIO=0.3`, and `PYTORCH_ENABLE_MPS_FALLBACK=1`, and the Python process reserves ~20% of RAM for the OS via `torch.mps.set_per_process_memory_fraction(0.80)`. These cap MPS allocations so the OS doesn't get paged out — but they only help if you also keep the OS side of the budget clean.
 
 ---
 
-## 6. Performance expectations
+## 6. Memory tuning (if you still hit MPS out-of-memory)
 
-- M1 Pro 16 GB: ~6 s/iter, ~10 GB unified memory peak (community report).
-- M4 Pro 24 GB: faster (estimate ~3–5 s/iter), more headroom.
-- Default 500 steps × ~5 s/iter ≈ **40 minutes per LoRA** on M4 Pro.
-- DetailTrain runs the training step twice (base + kari), so roughly **2× SimpleTrain wall-clock**.
+If section 5's hygiene checklist isn't enough, swap to the included low-memory profile:
+
+```bash
+cp config_lowmem.toml config.toml      # or symlink it; back up config.toml first
+./start.sh
+```
+
+`config_lowmem.toml` switches to **Adafactor + `fused_backward_pass`** (cuts optimizer-state memory ~50% vs AdamW) and `train_batch_size = 1`. Convergence per step is slightly slower but total wall-clock often comes out faster on memory-tight Macs because you stop swapping.
+
+If even that isn't enough, edit `config.toml` (or `config_lowmem.toml`) further:
+
+1. **Drop resolution**: `resolution = "768,768"` (still SDXL-compatible via bucketing).
+2. Already at `train_batch_size = 1` in lowmem; can't go lower.
+
+---
+
+## 7. Performance expectations
+
+Expected sustained step times on a clean M4 Pro 24 GB (Activity Monitor + Safari only, 1024×1024, `network_dim = 16`):
+
+| Profile               | Peak memory | Step time   | 500 steps |
+| --------------------- | ----------- | ----------- | --------- |
+| `config.toml` (AdamW) | ~18 GB      | 8–15 s/iter | ~75 min   |
+| `config_lowmem.toml`  | ~12 GB      | 6–10 s/iter | ~55 min   |
+
+DetailTrain runs the training step twice (base + kari), so roughly **2× SimpleTrain wall-clock**.
 
 The very first iteration is slow — Metal kernels compile on first use. Subsequent iterations run at the steady-state rate.
 
+**If you see step times >30 s/iter sustained, you are swapping.** That is a system-hygiene problem, not a platform limit. Re-read section 5.
+
+### Why these differ from Windows
+
+The Windows path uses fp16 mixed precision, 8-bit AdamW (bitsandbytes), and xformers. None of those are usable on Apple Silicon in 2026 (fp16/bf16 still produce NaN on MPS for SDXL, no Apple Silicon bitsandbytes build, no xformers build). The Mac path compensates with PyTorch SDPA (`sdpa = true`), MPS watermark tuning, `set_per_process_memory_fraction(0.80)`, `PYTORCH_ENABLE_MPS_FALLBACK=1`, and Adafactor + `fused_backward_pass` as the low-memory fallback.
+
+**Training math is identical to Windows** — only the device backend and memory strategy differ. The resulting `.safetensors` is the same kind of LoRA, produced by the same loss/optimizer math.
+
 ---
 
-## 7. Common gotchas
+## 8. Common gotchas
 
 - **`xformers` import errors** — already disabled in `config.toml`. If you still see them, you're not on the `mac` branch.
 - **`fp16` / `fp8` runtime errors** — same, switch to `mac`.
 - **`bitsandbytes` errors at startup** — not installed by `install.sh`; if you installed it manually, `uv pip uninstall bitsandbytes`.
 - **DataLoader worker crashes** — `max_data_loader_n_workers = 0` is required on MPS; do not raise it.
 - **First iteration is slow** — Metal kernel compilation; not a bug.
-- **Out of memory** — see section 5.
+- **Out of memory** — see sections 5 and 6.
 
 ---
 
-## 8. Using PyTorch nightly (optional)
+## 9. Using PyTorch nightly (optional)
 
 For the latest MPS bugfixes, swap the stable PyTorch install for nightly:
 
@@ -155,7 +181,7 @@ The `cpu` in the URL is misleading — Apple's official Metal docs use this same
 
 ---
 
-## 9. Differences from the Windows version
+## 10. Differences from the Windows version
 
 - No `xformers`, `bitsandbytes`, `triton-windows`, `onnxruntime-gpu`.
 - No PyInstaller `.app` bundle (deferred to v2).
@@ -165,7 +191,7 @@ The `cpu` in the URL is misleading — Apple's official Metal docs use this same
 
 ---
 
-## 10. Reporting issues
+## 11. Reporting issues
 
 Open issues on the fork: <https://github.com/hiyukoim/CoppyLora_webUI/issues>
 
