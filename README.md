@@ -2,6 +2,8 @@
 
 1枚のイラストから絵柄を学習するLoRA学習補助アプリ
 
+> macOS (Apple Silicon) users → see [README_MAC.md](README_MAC.md).
+
 ## 動作環境
 - **OS**: Windows 10 / 11
 - **GPU**: NVIDIA GPU（CUDA 12.8対応、RTX 5090含む）
