@@ -77,7 +77,10 @@ source .venv/bin/activate
 # Do NOT pass --index-url here; the cu128 channel has no Apple Silicon wheels.
 
 echo "Installing PyTorch (stable, with MPS)..."
-uv pip install torch torchvision torchaudio
+# PyTorch 2.5.x has a documented MPS memory regression (~50% larger working
+# set vs 2.4 / 2.6+). Pin >=2.6 so new installs can't land there.
+# 2.11.0 is the verified baseline as of v1.1.0-mac.
+uv pip install "torch>=2.6" "torchvision>=0.21" torchaudio
 
 # ---------------------------------------------------------------------------
 # 4. Clone sd-scripts at the upstream-pinned commit
