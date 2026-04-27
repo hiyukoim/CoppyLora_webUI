@@ -4,6 +4,7 @@ output_dir = "models/LoRA"
 max_train_steps = 500
 network_module = "networks.lora"
 xformers = false
+sdpa = true
 gradient_checkpointing = true
 persistent_data_loader_workers = false
 max_data_loader_n_workers = 0
