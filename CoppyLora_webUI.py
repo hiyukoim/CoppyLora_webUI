@@ -9,6 +9,23 @@ import socket
 import webbrowser
 import threading
 import toml
+import torch
+
+
+# Auto-detect the best available device:
+#   MPS (Apple Silicon) > CUDA (NVIDIA) > CPU.
+# MPS is checked first so that on a hypothetical Mac with an external CUDA
+# device the Mac-native backend wins; on Linux/Windows machines without MPS
+# the check falls through to CUDA.
+def _default_device() -> str:
+    if torch.backends.mps.is_available():
+        return "mps"
+    if torch.cuda.is_available():
+        return "cuda"
+    return "cpu"
+
+
+DEFAULT_DEVICE = _default_device()
 
 
 # ログでエラーが出るので、念のため環境変数を設定
@@ -307,7 +324,7 @@ def simple_train(base_model, input_image_path, lora_name, mode_inputs, character
         "new_conv_rank": 16,
         "save_to": train_lora,
         "model": merge_lora,
-        "device": "cuda",
+        "device": DEFAULT_DEVICE,
         "verbose": "store_true",
         "dynamic_param": None,
         "dynamic_method": None,
@@ -495,7 +512,7 @@ def detail_train(base_model, detail_lora_name, detail_base_img_path, detail_base
         "new_conv_rank": 16,
         "save_to": train_lora,
         "model": merge_lora,
-        "device": "cuda",
+        "device": DEFAULT_DEVICE,
         "verbose": "store_true",
         "dynamic_param": None,
         "dynamic_method": None,
