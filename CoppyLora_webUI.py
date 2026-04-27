@@ -28,6 +28,18 @@ def _default_device() -> str:
 DEFAULT_DEVICE = _default_device()
 
 
+# Reserve ~20% of unified memory for the OS / window server / browser.
+# Without this, MPS will happily request 90%+ of system RAM, the OS pages
+# WindowServer to swap, and step time blows up from ~10 s/iter to >100 s/iter.
+# Calibrated for 24 GB M4 Pro; harmless on machines with more RAM.
+if DEFAULT_DEVICE == "mps":
+    try:
+        torch.mps.set_per_process_memory_fraction(0.80)
+    except (AttributeError, RuntimeError):
+        # PyTorch <2.1 lacks this API; env vars in start.sh still cap memory.
+        pass
+
+
 # ログでエラーが出るので、念のため環境変数を設定
 os.environ['TERM'] = 'dumb'
 
