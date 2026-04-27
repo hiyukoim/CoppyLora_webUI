@@ -127,7 +127,15 @@ uv pip install numpy==1.26.4
 
 echo "Installing additional packages..."
 uv pip install wandb==0.17.3
-uv pip install gradio==4.3.0
+# Upstream pin (gradio==4.3.0) was Nov 2023 and is incompatible with current
+# starlette/pydantic releases. We bump to gradio 4.44.1 (Sep 2024) and pin its
+# contemporaries explicitly, since unpinned installs resolve to incompatible
+# 2025+ versions and fail at first request:
+#   - pydantic >= 2.10 emits additionalProperties: True (bool); gradio_client's
+#     get_type() does `if "const" in schema` and crashes on bool.
+#   - starlette >= 0.40 / fastapi >= 0.116 changed TemplateResponse to require
+#     (request, name, ctx); gradio 4.44.1 still calls (name, ctx).
+uv pip install "gradio==4.44.1" "pydantic<2.10" "fastapi==0.115.0" "starlette==0.38.6"
 uv pip install huggingface-hub==0.34.3
 uv pip install onnx==1.15.0 onnxruntime==1.17.1
 uv pip install toml
