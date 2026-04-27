@@ -13,10 +13,12 @@ save_model_as = "safetensors"
 lr_scheduler_num_cycles = 4
 learning_rate = 0.0001
 resolution = "1024,1024"
-train_batch_size = 2
+train_batch_size = 1
 network_dim = 16
 network_alpha = 16
-optimizer_type = "AdamW"
+optimizer_type = "Adafactor"
+optimizer_args = ["scale_parameter=False", "relative_step=False", "warmup_init=False"]
+fused_backward_pass = true
 mixed_precision = "no"
 save_precision = "bf16"
 lr_scheduler = "constant"
