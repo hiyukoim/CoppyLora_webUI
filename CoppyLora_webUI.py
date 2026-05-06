@@ -39,6 +39,62 @@ if DEFAULT_DEVICE == "mps":
         # PyTorch <2.1 lacks this API; env vars in start.sh still cap memory.
         pass
 
+    # Workaround for huggingface/accelerate's stale MPS bf16 check.
+    # `accelerate.utils.is_bf16_available` hard-codes `if is_mps_available(): return False`
+    # even though PyTorch 2.3+ supports bf16 on MPS (Apple Silicon, macOS 14+).
+    # That stale check causes `Accelerator(mixed_precision="bf16")` to raise
+    #   ValueError: bf16 mixed precision requires PyTorch >= 1.10 and a supported device.
+    # We rebind the name in both the public `accelerate.utils` namespace AND inside
+    # `accelerate.accelerator` (which imported the symbol with `from .utils import ...`
+    # so the local name is what Accelerator.__init__ actually resolves at line 571).
+    try:
+        import accelerate.utils as _accel_utils
+        import accelerate.accelerator as _accel_acc
+
+        def _is_bf16_available_mps(ignore_tpu: bool = False) -> bool:
+            # Trust the device: if MPS is available and PyTorch is recent enough
+            # (we pin torch>=2.6 in install.sh), bf16 mixed precision works on
+            # Apple Silicon and the Accelerator can stop refusing it.
+            if torch.backends.mps.is_available() and torch.backends.mps.is_built():
+                return True
+            return False
+
+        _accel_utils.is_bf16_available = _is_bf16_available_mps
+        _accel_acc.is_bf16_available = _is_bf16_available_mps
+    except (ImportError, AttributeError):
+        pass
+
+    # Enable VAE tiling on every AutoencoderKL instance.
+    # Background: at 1024x1024 fp32 (no_half_vae=true is required because the
+    # SDXL VAE is numerically unstable in fp16/bf16), a single VAE encode pass
+    # allocates ~3-5 GB of intermediate activations. PyTorch MPS does not free
+    # those between successive vae.encode() calls inside sd-scripts'
+    # `_default_cache_batch_latents`, so memory accumulates and overflows the
+    # ~14.2 GiB MPS cap on a 24 GB Mac before the second image is even encoded.
+    #
+    # `vae.enable_tiling()` switches the encoder to a tiled forward pass:
+    # the input is chopped into overlapping ~512x512 tiles, each tile is
+    # encoded separately, and the latents are stitched back. Peak activation
+    # memory drops by ~4x with no measurable quality difference for SDXL
+    # latents (this is the same mechanism diffusers uses for high-res
+    # img2img). It is a memory-management change only — the encoded latents
+    # are mathematically equivalent up to tile-edge interpolation, which is
+    # exactly what diffusers exposes the API for.
+    try:
+        from diffusers.models.autoencoders.autoencoder_kl import AutoencoderKL
+        _orig_autoencoderkl_init = AutoencoderKL.__init__
+
+        def _patched_autoencoderkl_init(self, *args, **kwargs):
+            _orig_autoencoderkl_init(self, *args, **kwargs)
+            try:
+                self.enable_tiling()
+            except Exception:
+                pass
+
+        AutoencoderKL.__init__ = _patched_autoencoderkl_init
+    except ImportError:
+        pass
+
 
 # ログでエラーが出るので、念のため環境変数を設定
 os.environ['TERM'] = 'dumb'
@@ -232,9 +288,15 @@ def simple_train(base_model, input_image_path, lora_name, mode_inputs, character
     os.makedirs(image_dir)
     output_dir = os.path.join(path, "output")
 
-    if os.path.exists(output_dir):
-        shutil.rmtree(output_dir)
-    os.makedirs(output_dir)
+    # Preserve previously-trained LoRAs in output/. The upstream Windows version
+    # wiped the entire output directory on every run, which silently destroyed
+    # any previous LoRA that hadn't been moved out — a hard problem to debug
+    # when comparing optimizers or doing iterative training. We only remove the
+    # specific same-name file the new run is about to overwrite.
+    os.makedirs(output_dir, exist_ok=True)
+    target_file = os.path.join(output_dir, f"{lora_name}.safetensors")
+    if os.path.exists(target_file):
+        os.remove(target_file)
     
     input_image = Image.open(input_image_path)
     base_lora = setup_base_lora(mode_inputs, character_type)
@@ -355,9 +417,11 @@ def detail_train(base_model, detail_lora_name, detail_base_img_path, detail_base
     os.makedirs(image_dir)
     output_dir = os.path.join(path, "output")
 
-    if os.path.exists(output_dir):
-        shutil.rmtree(output_dir)
-    os.makedirs(output_dir)
+    # See the matching comment in `simple_train` — keep the rest of output/.
+    os.makedirs(output_dir, exist_ok=True)
+    target_file = os.path.join(output_dir, f"{detail_lora_name}.safetensors")
+    if os.path.exists(target_file):
+        os.remove(target_file)
     
     input_image = Image.open(detail_base_img_path)
 

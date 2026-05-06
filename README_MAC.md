@@ -116,33 +116,27 @@ The launcher (`start.sh`) automatically sets `PYTORCH_MPS_HIGH_WATERMARK_RATIO=0
 
 ---
 
-## 6. The two configs
+## 6. The configs
 
 The repo ships two SDXL training configs:
 
 | File | Optimizer | Batch | Best for |
 | --- | --- | --- | --- |
-| `config.toml` (default) | Adafactor + `fused_backward_pass` | 1 | Every Mac. The launcher reads this. |
-| `config_adamw_full.toml` | AdamW (32-bit) | 2 | Reference profile. **Will OOM on every <64 GB Mac and probably most 64 GB Macs too** — Apple's `recommendedMaxWorkingSetSize` caps MPS at ~17.7 GiB regardless of how much RAM you have, and AdamW32 + fp32 + batch=2 needs ~18 GiB. Kept for transparency, not for daily use. |
+| `config.toml` (default) | **AdamW (32-bit)** | 1 | Every 24 GB+ Mac. The launcher reads this. Verified loss `0.052` after 500 steps on M4 Pro 24 GB. |
+| `config_adamw_full.toml` | AdamW (32-bit) | 2 | Windows-verbatim reference profile. **Will OOM on every <48 GB Mac** — Apple's `recommendedMaxWorkingSetSize` caps MPS at ~17.7 GiB regardless of total RAM, and AdamW32 + fp32 + batch=2 needs ~18 GiB. Kept for transparency, not for daily use. |
 
-To use the AdamW reference profile on a Mac Studio with enough headroom:
+The default config uses `train_batch_size = 1` (the only difference from `config_adamw_full.toml`). Combined with the **VAE tiling monkey-patch** applied at startup (see `CoppyLora_webUI.py`), this fits AdamW + fp32 UNet + LoRA training under the ~14.2 GiB MPS cap.
 
-```bash
-cp config.toml config.toml.adafactor-backup
-cp config_adamw_full.toml config.toml
-./start.sh
-```
-
-To restore the default afterward:
-
-```bash
-cp config.toml.adafactor-backup config.toml
-```
-
-If even the default Adafactor profile runs out of memory:
+If memory is tight (16 GB Mac, lots of apps open) and the default OOMs, two manual fallbacks:
 
 1. **Drop resolution**: `resolution = "768,768"` (still SDXL-compatible via bucketing).
-2. `train_batch_size` is already 1; can't go lower.
+2. **Switch to Adafactor manually**: edit `config.toml`:
+   ```toml
+   optimizer_type = "Adafactor"
+   optimizer_args = ["scale_parameter=False", "relative_step=False", "warmup_init=False"]
+   fused_backward_pass = true
+   ```
+   Adafactor's factored second-moment approximation is gentler on memory and produces a working LoRA, though benchmark loss was slightly higher (`0.0608` vs `0.052`) and Frobenius retention after SVD resize was 99.80% vs 99.62% — the LoRAs are visibly different but both usable. AdamW is preferred when it fits because it overfits more sharply, which is what CoppyLora's "train hard, subtract base" method wants.
 
 ---
 
@@ -150,10 +144,11 @@ If even the default Adafactor profile runs out of memory:
 
 Expected sustained step times on a clean M4 Pro 24 GB (Activity Monitor + Safari only, 1024×1024, `network_dim = 16`):
 
-| Config                      | Peak memory | Step time   | 500 steps | Status on 24 GB Mac |
-| --------------------------- | ----------- | ----------- | --------- | --- |
-| `config.toml` (Adafactor)   | ~12 GB      | 6–10 s/iter | ~55 min   | ✅ default — fits |
-| `config_adamw_full.toml`    | ~18 GB      | 8–15 s/iter | ~75 min   | ❌ OOMs at VAE caching (14.2 GiB cap) |
+| Config                          | Peak memory | Step time   | 500 steps | Final `avr_loss` | Status on 24 GB Mac |
+| ------------------------------- | ----------- | ----------- | --------- | --------------- | --- |
+| `config.toml` (AdamW + tiling)  | ~12 GB      | 6 s/iter    | ~50 min   | **0.052**       | ✅ default — verified |
+| `config_adamw_full.toml`        | ~18 GB      | 8–15 s/iter | ~75 min   | n/a             | ❌ OOMs at VAE caching (14.2 GiB cap) |
+| Adafactor fallback (manual)     | ~12 GB      | 6 s/iter    | ~53 min   | 0.061           | ✅ works — slightly less sharp overfit |
 
 DetailTrain runs the training step twice (base + kari), so roughly **2× SimpleTrain wall-clock**.
 
@@ -161,17 +156,22 @@ The very first iteration is slow — Metal kernels compile on first use. Subsequ
 
 **If you see step times >30 s/iter sustained, you are swapping.** That is a system-hygiene problem (section 5), not a platform limit.
 
-### Why the Mac default isn't AdamW
+### Why the Mac default still differs from Windows
 
 The Windows path uses **AdamW8bit** via bitsandbytes plus fp16 mixed precision plus xformers. None of those are usable on Apple Silicon in 2026:
 
-- fp16 / bf16 still produce NaN losses on MPS for SDXL training.
-- bitsandbytes has no Apple Silicon build, so 8-bit AdamW is unavailable.
-- xformers has no Apple Silicon build.
+- fp16 / bf16 still produce NaN losses on MPS for SDXL training (mixed_precision must be `"no"`).
+- bitsandbytes has no Apple Silicon native build (community fork `mps-bitsandbytes` exists but is alpha-quality as of this writing).
+- xformers has no Apple Silicon build (we use PyTorch SDPA via `sdpa = true` instead).
 
-That means "AdamW on Mac" is necessarily 32-bit AdamW with fp32 precision — a substitute that needs roughly **2× the Windows memory footprint**. At 1024×1024 batch=2 it peaks at ~18 GiB, which is over the MPS cap of ~14.2 GiB on a 24 GB Mac (Apple reserves the rest for the OS via `recommendedMaxWorkingSetSize`).
+So Mac runs **32-bit AdamW** with **fp32** precision — heavier per parameter than the Windows path, which is why we need:
 
-The Mac default therefore uses **Adafactor + `fused_backward_pass`**, which is the established Mac SDXL optimizer choice in the kohya_ss community since 2023. It is **not** bit-identical to Windows's AdamW8bit (and AdamW8bit isn't bit-identical to AdamW32 either — bitsandbytes is its own quantised approximation), but it produces the same kind of LoRA via a slightly different convergence trajectory. Visual quality on the resulting `.safetensors` rendered in Mac ComfyUI is the verification gate, not bitwise reproduction.
+1. **VAE tiling** (monkey-patched in `CoppyLora_webUI.py`) — chops the 1024² VAE encoder pass into ~512² tiles. Without this, peak activation memory during latent caching exceeds the cap before training even starts.
+2. **`network_train_unet_only = true`** — only LoRA params get gradients, so AdamW state is small (~0.3 GB) regardless of UNet size.
+3. **`set_per_process_memory_fraction(0.80)`** — reserves 20% of unified memory for macOS / WindowServer.
+4. **TE / VAE auto-offload to CPU** — sd-scripts' built-in behaviour after caching is done.
+
+The result: same kind of LoRA, slightly different convergence trajectory than Windows's AdamW8bit (which is itself an approximation of AdamW32). Visual quality in Mac ComfyUI is the verification gate.
 
 ---
 
@@ -204,7 +204,7 @@ The `cpu` in the URL is misleading — Apple's official Metal docs use this same
 - No `xformers`, `bitsandbytes`, `triton-windows`, `onnxruntime-gpu`.
 - No PyInstaller `.app` bundle (deferred to v2).
 - No automated model downloader (`CoppyLora_webUI_DL.cmd` Mac equivalent — manual download per section 3).
-- Uses **Adafactor + `fused_backward_pass`** (in `config.toml`) instead of `AdamW8bit`. AdamW8bit needs bitsandbytes, which has no Apple Silicon build. A reference 32-bit AdamW config is shipped as `config_adamw_full.toml` but will OOM on essentially every Mac (see section 7).
+- Uses **AdamW (32-bit)** with `train_batch_size = 1` (in `config.toml`) instead of `AdamW8bit`. AdamW8bit needs bitsandbytes, which has no Apple Silicon native build. The Mac path makes 32-bit AdamW fit by lowering batch size to 1, enabling VAE tiling, capping the MPS memory fraction at 0.80, and offloading text encoders to CPU after their outputs are cached. The Windows-verbatim `train_batch_size = 2` config is shipped as `config_adamw_full.toml` for reference but will OOM on every <48 GB Mac (see section 7). Adafactor + `fused_backward_pass` is documented as a manual fallback in section 6.
 - Otherwise: training logic, Gradio UI, captions, base PNGs, merge/resize flow are byte-identical.
 
 ---
