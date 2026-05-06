@@ -1,3 +1,4 @@
+import gc
 import os
 import shutil
 import gradio as gr
@@ -94,6 +95,28 @@ if DEFAULT_DEVICE == "mps":
         AutoencoderKL.__init__ = _patched_autoencoderkl_init
     except ImportError:
         pass
+
+
+def _release_mps_memory():
+    """Release Python references and tell MPS to drop its cached blocks.
+
+    PyTorch's MPS allocator caches freed blocks for reuse and never
+    automatically returns them to the OS. The Gradio process is long-lived
+    (a single click on Train can fire many minutes after Tagger / Caption /
+    a previous training), so MPS memory accumulates from earlier operations
+    and the next training step starts already 4-8 GB into the 14.2 GiB cap.
+
+    Calling `gc.collect()` first drops any Python-side dead references that
+    still pin tensors; then `torch.mps.empty_cache()` returns the cached
+    MPS blocks. On Mac, this is the only safe handle we have for
+    "reset between operations". No-op on non-MPS devices.
+    """
+    gc.collect()
+    if DEFAULT_DEVICE == "mps":
+        try:
+            torch.mps.empty_cache()
+        except (AttributeError, RuntimeError):
+            pass
 
 
 # ログでエラーが出るので、念のため環境変数を設定
@@ -450,6 +473,12 @@ def simple_train(base_model, input_image_path, lora_name, mode_inputs, character
     TextEncoderOutputsCachingStrategy._strategy = None
     LatentsCachingStrategy._strategy = None
 
+    # Drop any cached MPS blocks left over from earlier Gradio operations
+    # (a previous train, the Tagger ONNX session, sample-image renders,
+    # etc.). Without this, the next checkpoint load can hit OOM at the
+    # 14.2 GiB cap because the cache still holds 4-8 GiB from before.
+    _release_mps_memory()
+
     parser = sdxl_train_network.setup_parser()
     args = parser.parse_args()
     sdxl_train_network.train_util.verify_command_line_training_args(args)
@@ -581,6 +610,12 @@ def detail_train(base_model, detail_lora_name, detail_base_img_path, detail_base
     TextEncoderOutputsCachingStrategy._strategy = None
     LatentsCachingStrategy._strategy = None
 
+    # Drop any cached MPS blocks left over from earlier Gradio operations
+    # (a previous train, the Tagger ONNX session, sample-image renders,
+    # etc.). Without this, the next checkpoint load can hit OOM at the
+    # 14.2 GiB cap because the cache still holds 4-8 GiB from before.
+    _release_mps_memory()
+
     parser = sdxl_train_network.setup_parser()
     args = parser.parse_args()
     sdxl_train_network.train_util.verify_command_line_training_args(args)
@@ -648,6 +683,12 @@ def detail_train(base_model, detail_lora_name, detail_base_img_path, detail_base
     TextEncodingStrategy._strategy = None
     TextEncoderOutputsCachingStrategy._strategy = None
     LatentsCachingStrategy._strategy = None
+
+    # Drop any cached MPS blocks left over from earlier Gradio operations
+    # (a previous train, the Tagger ONNX session, sample-image renders,
+    # etc.). Without this, the next checkpoint load can hit OOM at the
+    # 14.2 GiB cap because the cache still holds 4-8 GiB from before.
+    _release_mps_memory()
 
     parser = sdxl_train_network.setup_parser()
     args = parser.parse_args()
