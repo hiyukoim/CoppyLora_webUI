@@ -16,10 +16,9 @@ resolution = "1024,1024"
 train_batch_size = 1
 network_dim = 16
 network_alpha = 16
-optimizer_type = "Adafactor"
-optimizer_args = ["scale_parameter=False", "relative_step=False", "warmup_init=False"]
-fused_backward_pass = true
+optimizer_type = "AdamW"
 mixed_precision = "no"
+full_bf16 = false
 save_precision = "bf16"
 lr_scheduler = "constant"
 bucket_no_upscale = true
