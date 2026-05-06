@@ -1,3 +1,11 @@
+# Extra directories to scan for SDXL base models (.safetensors), in addition
+# to the repo-local `models/SDXL/` folder. Files appear in the Base Model
+# dropdown as `<dirname>::<filename>`. Missing/unmounted entries are skipped
+# silently. Leave empty to use only the repo-local folder.
+# Example (Stability Matrix on a Mac with the library on an external volume):
+# model_dirs = ["/Volumes/Nekochan/Stability Matrix/Data/Models/StableDiffusion"]
+model_dirs = []
+
 pretrained_model_name_or_path = "models/animagine-xl-3.1.safetensors"
 train_data_dir = "train_data"
 output_dir = "models/LoRA"

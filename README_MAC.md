@@ -87,15 +87,47 @@ Note: upstream's `CoppyLora_webUI_DL.cmd` also tries to download `copi-ki-base-f
 
 Verify any file with: `shasum -a 256 <file>`
 
+### 3.4 Using SDXL models from external volumes (e.g. Stability Matrix)
+
+If your SDXL model library lives outside the repo — Stability Matrix on an external SSD is a common Mac setup — you have two options:
+
+**Option A: symlink** (one model at a time, no config changes)
+
+```bash
+cd "models/SDXL"
+ln -s "/Volumes/YourDrive/Stability Matrix/Data/Models/StableDiffusion/some-model.safetensors" .
+```
+
+This is what `models/SDXL/animagine-xl-3.1.safetensors` does on the maintainer's machine. The dropdown picks up symlinks automatically.
+
+**Option B: configure `model_dirs` in `config.toml`** (recommended for many models)
+
+Edit `config.toml` and add directories to scan:
+
+```toml
+model_dirs = [
+    "/Volumes/Nekochan/Stability Matrix/Data/Models/StableDiffusion",
+    # add more dirs here, one per line
+]
+```
+
+The dropdown then shows entries like `StableDiffusion::aMixIllustrious_aMix.safetensors` alongside the repo-local files. The `<dirname>::<filename>` format keeps the dropdown short and prevents collisions when two directories happen to contain the same filename.
+
+**If a configured directory is unmounted** (you ejected the drive) it's silently skipped — the dropdown still loads with whatever else is available. Click "List Update" in the DetailTrain tab to re-scan after you mount/unmount.
+
 ---
 
 ## 4. Run
+
+**Double-click `Launch CoppyLora.command`** in Finder — Terminal opens, logs stream live, and your browser opens automatically when the UI is ready. Close the Terminal window to stop the app.
+
+Alternatively, run directly from Terminal:
 
 ```bash
 ./start.sh
 ```
 
-The Gradio app launches and your browser opens to <http://127.0.0.1:7860> (or the next free port if 7860 is taken).
+Either way, the Gradio app launches and your browser opens to <http://127.0.0.1:7860> (or the next free port if 7860 is taken).
 
 `./venv.sh` drops you into an interactive subshell with the venv activated, useful for running `python -c "..."` checks against the same environment.
 

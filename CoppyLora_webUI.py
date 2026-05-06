@@ -168,10 +168,97 @@ girl_mode_paths = {
 caption_dir = os.path.join(path, "caption")
 
 
+# Separator used when prefixing a filename with its source-dir tag in the
+# Base Model dropdown. Chosen to be unlikely in real safetensors filenames so
+# we can split unambiguously in resolve_base_model_path().
+_MODEL_DIR_TAG_SEP = "::"
+
+
+def _read_model_dirs_from_config():
+    """Return the user-configured list of extra model directories.
+
+    Read from `config.toml`'s `model_dirs` key. Missing/invalid entries are
+    silently dropped so a typo or an ejected external volume doesn't break
+    the dropdown.
+    """
+    try:
+        with open(config_path, "r") as f:
+            cfg = toml.load(f)
+    except (OSError, toml.TomlDecodeError):
+        return []
+    raw = cfg.get("model_dirs", [])
+    if not isinstance(raw, list):
+        return []
+    return [d for d in raw if isinstance(d, str) and d]
+
+
 # ベースモデル候補を取得する関数
 def get_base_model_options():
-    """sdxl_dir の中身を走査してファイル名のリストを返す"""
-    return [f for f in os.listdir(sdxl_dir) if f.endswith(".safetensors")]
+    """Scan sdxl_dir AND any user-configured extra dirs for *.safetensors.
+
+    Local files (in `models/SDXL/`) are listed by bare filename, matching the
+    upstream Windows behaviour. Files from any directory configured in
+    `config.toml`'s `model_dirs` list are listed as `<tag>::<filename>` where
+    `<tag>` is the basename of the configured directory (so the dropdown stays
+    short, and two directories with identical filenames don't collide).
+    `resolve_base_model_path()` reverses this back to an absolute path.
+    """
+    options = []
+    if os.path.isdir(sdxl_dir):
+        options.extend(
+            sorted(f for f in os.listdir(sdxl_dir) if f.endswith(".safetensors"))
+        )
+
+    seen_tags = {}  # tag -> count, to disambiguate same-basename dirs
+    for extra in _read_model_dirs_from_config():
+        # Expand ~ but DON'T resolve symlinks — Stability Matrix's library
+        # path can itself be a symlink and we want to preserve that.
+        expanded = os.path.expanduser(extra)
+        if not os.path.isdir(expanded):
+            continue  # Volume not mounted, path mistyped, etc. — skip silently.
+        base_tag = os.path.basename(os.path.normpath(expanded)) or "extra"
+        seen_tags[base_tag] = seen_tags.get(base_tag, 0) + 1
+        tag = base_tag if seen_tags[base_tag] == 1 else f"{base_tag}{seen_tags[base_tag]}"
+        try:
+            for f in sorted(os.listdir(expanded)):
+                if f.endswith(".safetensors"):
+                    options.append(f"{tag}{_MODEL_DIR_TAG_SEP}{f}")
+        except OSError:
+            continue
+    return options
+
+
+def resolve_base_model_path(base_model: str) -> str:
+    """Map a Base Model dropdown value back to an absolute file path.
+
+    Plain filenames (no `::` separator) are looked up under `sdxl_dir`,
+    matching the upstream behaviour. `<tag>::<filename>` forms are looked up
+    by re-scanning the configured `model_dirs` and finding the directory whose
+    basename matches `<tag>`. Same disambiguation rule as
+    `get_base_model_options()` for duplicate basenames.
+    """
+    if _MODEL_DIR_TAG_SEP in base_model:
+        tag, filename = base_model.split(_MODEL_DIR_TAG_SEP, 1)
+        seen_tags = {}
+        for extra in _read_model_dirs_from_config():
+            expanded = os.path.expanduser(extra)
+            if not os.path.isdir(expanded):
+                continue
+            base_tag = os.path.basename(os.path.normpath(expanded)) or "extra"
+            seen_tags[base_tag] = seen_tags.get(base_tag, 0) + 1
+            this_tag = (
+                base_tag if seen_tags[base_tag] == 1
+                else f"{base_tag}{seen_tags[base_tag]}"
+            )
+            if this_tag == tag:
+                return os.path.join(expanded, filename)
+        raise FileNotFoundError(
+            f"Base model '{base_model}' could not be resolved. "
+            f"Check `model_dirs` in config.toml; the source directory "
+            f"may be unmounted or removed."
+        )
+    return os.path.join(sdxl_dir, base_model)
+
 
 # base_model を選択肢として更新するための関数
 def update_base_model_options():
@@ -310,7 +397,13 @@ def simple_train(base_model, input_image_path, lora_name, mode_inputs, character
     with open(config_path, 'r') as f:
         config = toml.load(f)
 
-    base_model_path = os.path.join(sdxl_dir, base_model)
+    base_model_path = resolve_base_model_path(base_model)
+    if not os.path.exists(base_model_path):
+        raise FileNotFoundError(
+            f"Base model file not found: {base_model_path}. "
+            f"If this is from an external volume listed in `model_dirs`, "
+            f"check that the volume is mounted."
+        )
     kari_lora_name = "copi-ki-kari"
     args_dict = {
         "pretrained_model_name_or_path": base_model_path,
@@ -434,7 +527,13 @@ def detail_train(base_model, detail_lora_name, detail_base_img_path, detail_base
     with open(config_path, 'r') as f:
         config = toml.load(f)
 
-    base_model_path = os.path.join(sdxl_dir, base_model)
+    base_model_path = resolve_base_model_path(base_model)
+    if not os.path.exists(base_model_path):
+        raise FileNotFoundError(
+            f"Base model file not found: {base_model_path}. "
+            f"If this is from an external volume listed in `model_dirs`, "
+            f"check that the volume is mounted."
+        )
     base_lora_name = "copi-ki-base"
 
     args_dict = {
