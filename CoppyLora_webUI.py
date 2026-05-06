@@ -285,7 +285,11 @@ def resolve_base_model_path(base_model: str) -> str:
 
 # base_model を選択肢として更新するための関数
 def update_base_model_options():
-    return gr.Dropdown.update(choices=get_base_model_options())
+    # Gradio 4.x replaced the old `gr.Dropdown.update(...)` classmethod with
+    # "just construct a fresh component and return it" — same effect, simpler
+    # API. Upstream Windows still uses the 3.x form (and an open upstream PR
+    # tracks it), so we keep this on the Mac branch for now.
+    return gr.Dropdown(choices=get_base_model_options())
 
 def find_free_port(start_port=7860):
     """指定したポートから開始して空いているポートを見つけて返す関数"""
