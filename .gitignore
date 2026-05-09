@@ -6,6 +6,13 @@
 /sd-scripts
 /_models_backup
 
+# Per-clone training config. The shared default lives in `config.toml.example`;
+# `install.sh` copies it to `config.toml` on first run if missing. Personal
+# edits (e.g. `model_dirs` pointing at an external Stability Matrix volume)
+# stay in your local `config.toml` and never get committed.
+/config.toml
+/config.toml.bak
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
