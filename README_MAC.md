@@ -102,7 +102,7 @@ This is what `models/SDXL/animagine-xl-3.1.safetensors` does on the maintainer's
 
 **Option B: configure `model_dirs` in `config.toml`** (recommended for many models)
 
-Edit `config.toml` and add directories to scan:
+`config.toml` is your **per-clone** config — `install.sh` creates it from `config.toml.example` on first run, and it's gitignored, so personal edits never leak into commits. Open it and add directories to scan:
 
 ```toml
 model_dirs = [
@@ -114,6 +114,11 @@ model_dirs = [
 The dropdown then shows entries like `StableDiffusion::aMixIllustrious_aMix.safetensors` alongside the repo-local files. The `<dirname>::<filename>` format keeps the dropdown short and prevents collisions when two directories happen to contain the same filename.
 
 **If a configured directory is unmounted** (you ejected the drive) it's silently skipped — the dropdown still loads with whatever else is available. Click "List Update" in the DetailTrain tab to re-scan after you mount/unmount.
+
+#### Where the defaults come from
+
+- `config.toml.example` — committed to git, the shared default for everyone. Don't edit this directly unless you intend to ship a new default to the whole repo.
+- `config.toml` — your local copy, gitignored. `install.sh` materialises it on first run. Future `git pull` won't touch it. To see what changed in the upstream defaults: `diff config.toml config.toml.example`.
 
 ---
 

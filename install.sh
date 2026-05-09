@@ -206,6 +206,29 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+# 9b. Per-clone training config (config.toml) — copy from template if missing
+# ---------------------------------------------------------------------------
+# `config.toml` is gitignored so personal edits (e.g. `model_dirs` pointing at
+# an external Stability Matrix volume) don't leak into commits. The shared
+# defaults live in `config.toml.example` and ship with the repo. On first run
+# we materialise the user's `config.toml` from the template; on subsequent
+# runs we leave it alone so customisations survive re-installs.
+
+if [ ! -f config.toml ]; then
+    if [ -f config.toml.example ]; then
+        cp config.toml.example config.toml
+        echo "Created config.toml from template. Edit as needed (e.g. add"
+        echo "Stability Matrix path to model_dirs); your changes won't show"
+        echo "up in git status."
+    else
+        echo "WARNING: config.toml.example not found. config.toml not created." >&2
+    fi
+else
+    echo "Existing config.toml found — leaving untouched. To see what changed"
+    echo "in the shipped template since last update: diff config.toml config.toml.example"
+fi
+
+# ---------------------------------------------------------------------------
 # 10. Final summary
 # ---------------------------------------------------------------------------
 
